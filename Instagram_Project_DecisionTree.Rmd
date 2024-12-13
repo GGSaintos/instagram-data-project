@@ -1,0 +1,392 @@
+---
+title: "Instagram Reels Posting Strategies"
+output: html_notebook
+---
+
+#Load Packages 
+```{r}
+library(tidyverse)
+library(ISLR)
+library(dplyr)
+```
+
+#Load Dataset
+```{r}
+insta_data <- read.csv('/Users/ggsantos/Documents/Data_Python_folder/pandas_projects/Instagram Reels(testing_data).csv')
+View(insta_data)
+```
+
+```{r}
+library(readr)
+instagram_cleaner <- insta_data%>%
+  select(Profile.URL, 
+         Post.ID, 
+         Reel.URL, 
+         Likes,
+         total_replies = Raw.Replies,
+         v_length = Video.Length..seconds.,
+         post_time = Post.Time..EST.,
+         Month,
+         Cumulative.Date,
+         Day.of.Week,
+         View.Count,
+         Followers
+
+  )
+instagram_cleaner
+```
+
+#Cleaning Data 
+Cleaning the Data before Visualization and training 
+
+We must first filter out outliers and certain conditions in View counts that may cause a skew in the data  
+
+```{r}
+instagram <- instagram_cleaner %>% 
+  drop_na(Likes)
+```
+
+#Outliers should be filtered out as well to avoid skewing of data 
+```{r}
+
+z_scores <- scale(instagram$View.Count)
+outliers <- abs(z_scores) > 3
+
+Q1 <- quantile(instagram$View.Count, 0.25)
+Q3 <- quantile(instagram$View.Count, 0.75)
+IQR <- Q3 - Q1
+outliers <- instagram$View.Count < (Q1 - 1.5 * IQR) | instagram$View.Count > (Q3 + 1.5 * IQR)
+
+instagram_1 <- instagram[!outliers, ]
+
+instagram_1
+```
+
+
+Now in order to properly visualize time we must convert the time to the proper formatting and afterwards we can categorize each time by time_category
+```{r}
+
+unique(instagram_1$post_time)
+
+
+time_filter <- instagram_1 %>%
+  #filter out any NA's in post_time
+  filter(!is.na(post_time))%>%
+  #remove the extra space
+  mutate(post_time = trimws(post_time))  
+
+str_time <- time_filter %>%
+  mutate(
+    post_time = if_else(
+      #Checks if hour is single digit
+      str_detect(post_time, "^\\d{1}:\\d{2}:\\d{2}$"),  
+      #then add the 0 
+      str_replace(post_time, "^(\\d{1}):", "0\\1:"),   
+      #if not keep it the same 
+      post_time 
+    )
+  )
+
+#set as_hms 
+library(hms)
+hms_post <- str_time %>%
+  mutate(post_time = as_hms(post_time))
+
+hms_post
+
+```
+
+Prepare for pre_training, meaning that before we train we will finalize the amount that will be needed for training and testing.80% of the data will be used for training and 20% will be used for testing 
+```{r}
+#set hms_post to pre_training and separate the hours time category 
+#us case_when instead of if_else 
+pre_training <- hms_post %>%
+  mutate(
+    time_category = case_when(
+      post_time >= hms(hours = 6) & post_time < hms(hours = 12) ~ "Morning",
+      post_time >= hms(hours = 12) & post_time < hms(hours = 18) ~ "Afternoon",
+      post_time >= hms(hours = 18) & post_time < hms(hours = 22) ~ "Evening",
+      (post_time >= hms(hours = 22) & post_time < hms(hours = 24)) | 
+      (post_time >= hms(hours = 0) & post_time < hms(hours = 3)) ~ "Late Night",
+      post_time >= hms(hours = 3) & post_time < hms(hours = 6) ~ "Early Morning",
+      TRUE ~ NA_character_
+    )
+  )
+```
+
+#Key Question and Hypothesis: 
+Which factors greatly contribute to mid-tier influencers(25000-500000 followers) becoming viral or being pushed to the explore page? 
+
+Hypothesis: Videos posted during Sundays, tend to perform more adequately,more users are likely to check social media once weekend plans have been fulfilled and are ready to settle to prepare for weekdays. 
+
+In regards to hours [posting early evenings from 5-6 pm will perform better as an individuals will check social after the day ends in that hour, and engagement will spill in to the early mornings where people will check their social media feed as well. 
+
+In relation to engagement, the more engagement a post obtains, the more likely that the algorithm will reward the video with a push to the explore page resulting in more views. The likes will naturally be higher than the comments, though the closer the ratio of comments:view is to 1, the more likely it will be pushed on the explore page. 
+
+#EDA 
+1. #EDA Visualize Ditributions of Key Numerical Variables 
+
+```{r}
+library(ggplot2)
+```
+
+Visualize 
+```{r}
+comments_time <- pre_training %>% 
+  #find the trend in comment to view ratio in regards to time of the data
+  #facet this by days
+  ggplot(aes(x = post_time, y = total_replies)) + 
+  geom_point(color = "orange") + 
+  geom_smooth(method = "loess", color = "red", alpha = 0.3) +  # Smoothed trend line
+  labs(
+    title = "Comments from 00:00 - 24:00(Faceted in Days)",
+    x = "Time of Day",
+    y = "# of Comments"
+  ) +
+  #Appropriately Zoom on the y axis 
+  coord_cartesian(ylim = c(0, 200)) +  
+  theme_minimal() + 
+  facet_wrap(~ Day.of.Week)
+comments_time
+```
+
+
+
+```{r}
+#Factor so that the time_category is in time order 
+pre_training$time_category <- factor(pre_training$time_category, 
+                                   levels = c("Morning", "Afternoon", 
+                                              "Evening", "Late Night","Early Morning"))
+
+#set a pipeline that has the comment frequency by time_category 
+pre_training %>% 
+  ggplot(aes(x = time_category, y = total_replies)) + 
+  geom_col(color ='orange',fill = 'orange') + 
+  labs(
+    title = "Comment Count by Time Category",
+    x = "Time Category",
+    y = "#of Comments"
+  ) +
+  coord_cartesian(ylim = c(0, 30000)) +  
+  theme_minimal()
+```
+
+```{r}
+pre_training$Day.of.Week <- factor(pre_training$Day.of.Week, 
+                                   levels = c("Monday", "Tuesday", "Wednesday", 
+                                              "Thursday", "Friday", "Saturday", "Sunday"))
+#pipeline that showcases comment frequency by days 
+pre_training %>% 
+  ggplot(aes(x = Day.of.Week, y = total_replies)) + 
+  geom_col(color = 'orange',fill = 'orange') + 
+  labs(
+    title = "Comment Count by Day of the Week",
+    x = "Day of the Week",
+    y = "# of Comments"
+  ) +
+  coord_cartesian(ylim = c(0, 15000)) + 
+  theme_minimal()
+```
+
+
+```{r}
+pre_training$Day.of.Week <- factor(pre_training$Day.of.Week, 
+                                   levels = c("Monday", "Tuesday", "Wednesday", 
+                                              "Thursday", "Friday", "Saturday", "Sunday"))
+
+#showcase post_time by View count with a loess line to visualize
+#trend throughout the day 
+#facet this by days of the week 
+pre_training %>% 
+  ggplot(aes(x = post_time, y = View.Count)) + 
+  geom_point(color ="maroon") + 
+  geom_smooth(method = "loess", color = "blue", alpha = 0.3) + 
+  labs(
+    title = "View Count(Faceted in Days)",
+    x = "Time of Day",
+    y = "# of Views"
+  ) +
+  coord_cartesian(ylim = c(0, 300000)) +
+  theme_minimal() +
+  facet_wrap(~ Day.of.Week)
+```
+
+
+
+```{r}
+pre_training$Day.of.Week <- factor(pre_training$Day.of.Week, 
+                                   levels = c("Monday", "Tuesday", "Wednesday", 
+                                              "Thursday", "Friday", "Saturday", "Sunday"))
+
+#Frequency bar braph that showcases View Frequency by Days 
+pre_training %>% 
+  ggplot(aes(x = Day.of.Week, y = View.Count)) + 
+  geom_col(color = "maroon",fill = 'maroon') + 
+  labs(
+    title = "View Count by Day of the Week",
+    x = "Day of the Week",
+    y = "Total # of Views"
+  ) +
+  coord_cartesian(ylim = c(0, 12000000)) + 
+  theme_minimal()
+```
+
+
+```{r}
+
+#Showcases Viewcount frequency by time category 
+pre_training %>% 
+  ggplot(aes(x = time_category, y = View.Count)) + 
+  geom_col(color ='maroon',fill ='maroon') + 
+  labs(
+    title = "View Count by Time Category",
+    x = "Time Category",
+    y = "Total # of Views"
+  ) +
+  coord_cartesian(ylim = c(0, 27500000)) +  
+  theme_minimal()
+```
+
+```{r}
+#Facet by days
+#Showcase the Likes trend throughout time 
+pre_training %>% 
+  ggplot(aes(x = post_time, y = View.Count)) + 
+  geom_point(color = "maroon") + 
+  geom_smooth(method = "loess", color = "blue", alpha = 0.3) + 
+  labs(
+    title = "View Trend(Faceted in Days)",
+    x = "Time of Day",
+    y = "# of Views"
+  ) +
+  coord_cartesian(ylim = c(0, 250000)) +
+  theme_minimal() +
+  facet_wrap(~ Day.of.Week)
+```
+
+```{r}
+#Showcase Like frequency throughout the days of the week 
+pre_training %>% 
+  ggplot(aes(x = Day.of.Week, y = Likes)) + 
+  geom_col(fill = 'turquoise', color = 'turquoise') + 
+  labs(
+    title = "Total # of Likes Per Day",
+    x = "Days",
+    y = "# of Likes"
+  ) +
+  coord_cartesian(ylim = c(0, 1000000)) +  # Zoom in on y-axis (0 to 0.5 for example) 
+  theme_minimal()
+```
+
+```{r}
+#Showcase like frequency by time category 
+pre_training %>% 
+  ggplot(aes(x = time_category, y = Likes)) + 
+  geom_col(fill = 'turquoise', color = 'turquoise') + 
+  labs(
+    title = "Likes by Time Category",
+    x = "Days",
+    y = "# of Likes"
+  ) +
+  coord_cartesian(ylim = c(0, 2000000)) +  # Zoom in on y-axis (0 to 0.5 for example) 
+  theme_minimal()
+```
+
+```{r}
+pre_training %>% 
+  ggplot(aes(x = post_time, y = Likes)) + 
+  geom_point(color = "turquoise") + 
+  geom_smooth(method = "loess", color = "blue", alpha = 0.3) + 
+  labs(
+    title = "Likes Trend(Faceted in Days)",
+    x = "Time of Day",
+    y = "# of Views"
+  ) +
+  coord_cartesian(ylim = c(0, 25000)) +
+  theme_minimal() +
+  facet_wrap(~ Day.of.Week)
+```
+
+```{r}
+#make a visual for video length and View Count, 
+#filtering out any outliers on the x axis/y axis 
+pre_training %>% 
+  filter(v_length < 60  & View.Count < 500000) %>%
+  ggplot(aes(x = v_length, y = View.Count)) + 
+  geom_point(color = "darkgreen") + 
+  geom_smooth(method = "loess", color = "red", alpha = 0.3) + 
+  labs(
+    title = "View Count(Faceted in Days)",
+    x = "Video Length",
+    y = "# of Views"
+  ) +
+  coord_cartesian(ylim = c(0, 500000)) +
+  theme_minimal()
+```
+
+
+#Step 2: Decision Tree/Probability 
+With this project a decision tree was made combining categorical/numerical data and predicting the probability for the categorical and numerical values. 
+```{r}
+#Utilize library rpart to make a decision tree
+library(rpart)
+library(rpart.plot)
+
+# Build the tree model utilizing Views as the target variable, with likes, day of week, time category, comments, video length being predictors
+tree_model <- rpart(View.Count ~ Day.of.Week + Likes + time_category + total_replies + v_length + Followers, data = pre_training, method = "anova")
+
+#plot tree model 
+rpart.plot(tree_model)
+```
+Decision Tree Analysis: 
+Left Branch(Likes < 5685)
+	1.	Likes < 3195:
+	Predicted view count: 42k views.
+	Further splits:
+	  Likes < 1292:
+	  Results in either 25k views or 53k views, 
+	  depending on additional conditions.
+	Likes ≥ 1292:
+	  Likely to achieve 101k views.
+	  
+	2.	Likes ≥ 3195:
+  The view count increases to 101k views suggests a strong correlation with 
+  likes and viewership.
+  
+
+The Right Branch (Likes ≥ 5685):
+
+	1.	Likes < 40k:
+		Predicted view count: 192,000 views.
+	  Further splits:
+	    Likes < 13k:
+	    Results in 182k views.
+	    Further split based on followers:
+	    	Followers < 31k: Predicted views drop to 158,000 views.
+	    	Followers ≥ 31k: Predicted views increase to 169,000 views.
+	  Likes ≥ 13k:
+    Predicted views increase to 222k views with significant influence from the time     category (Afternoon, Evening, Late Night).
+
+
+Posts made in the Afternoon, Evening or Late Nights, 
+have the potential to reach 281k views
+
+Number of replies further influences views:
+  If more than 84 replies: then View counts rise to 360k
+  Less than 84 replies: view count is 228k
+  
+  
+Video Length Impact:
+  If Video <= 54 seconds: 261k Views
+  if > 54 likely to achieve 167k Views 
+
+Conclusion: 
+
+The findings in this research partially supports the original hypothesis, as Monday and Tuesday emerged as days with highest engagement levels, though posting on Sunday afternoons would show promising potential to reach a broader audience as the video will have a good chance of spilling into the algorithm on the days where engagement is high. 
+
+In regards to engagement, the more likes the post receives, the more views it will generate. A pre-requisite to a video that will obtain high engagement is an adequate hook and engaging content. According to the data the algorithm rewards videos that are well balanced lengths below 54 and having more total engagement( Likes and comments). This reward can be pushing the video to the explore page for other viewers to see, expanding the audience for the video. The explore page is a page where videos considered to be trending and/or viral are placed for a larger group of audience other than the user's followers. 
+
+Although there has been statistics that involves Likes, Comments, Time, Date, video length, this data can be expanded by utilizing API Keys or Appium to extract data such as Shares, Saves, Percentage of reach to followers to non-followers, Bonus rewards(monetization that one gets in relation to engagement and Views). 
+
+Overall, this model can be useful to businesses who utilize social media as means of marketing as a guide to whether videos/posts are well timed in terms of hook and audience-engaging qualities. This 
+
