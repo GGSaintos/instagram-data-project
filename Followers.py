@@ -16,8 +16,8 @@ service = Service(driver_path)
 driver = webdriver.Chrome(service=service)
 
 # Instagram Login Credentials
-username = "goldengoosesaintso"
-password = "garyoakpoke123"
+username = "username"
+password = "password"
 
 # Open Instagram login page
 driver.get("https://www.instagram.com/accounts/login/")
